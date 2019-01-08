@@ -64,15 +64,18 @@ class BaseSocket:
     def readReply(self):
         if not self.connected:
             raise socket.error("readReply() on a disconnected socket")
-
-        try:
-            reply = self.sock.recv(1024)
-            if reply.find(b'---^') != -1 or reply.find(b'^---') != -1:
-                # read next line for actual message
+        retries = 5
+        for i in range(1, retries):
+            try:
                 reply = self.sock.recv(1024)
-        except Exception as error:
-            self.disconnect()
-            raise IOError("Fail to read response, error: {}", error)
+                if reply.find(b'---^') != -1 or reply.find(b'^---') != -1:
+                    # read next line for actual message
+                    reply = self.sock.recv(1024)
+                break
+            except Exception as error:
+                if i == retries-1:
+                    self.disconnect()
+                    raise IOError("Fail to read response, error: {}", error)
 
         str_reply = reply.decode("utf-8")
         logger.debug('Reply message({})'.format(str_reply))

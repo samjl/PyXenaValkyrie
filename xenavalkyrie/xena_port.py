@@ -8,6 +8,8 @@ import os
 from collections import OrderedDict
 from enum import Enum
 
+from trafficgenerator.tgn_utils import TgnError
+
 from xenavalkyrie.api.xena_socket import XenaCommandError
 from xenavalkyrie.xena_object import XenaObject, XenaObject21
 from xenavalkyrie.xena_stream import XenaStream, XenaStreamState
@@ -17,6 +19,11 @@ class XenaCaptureBufferType(Enum):
     raw = 0
     text = 1
     pcap = 2
+
+class XenaPortPayloadModeEnum(Enum):
+    NORMAL = 'NORMAL'#: normalmode
+    EXTPL = 'EXTPL'#: extended payload
+    CDF = 'CDF'#: customdatafield
 
 
 class XenaPort(XenaObject):
@@ -204,9 +211,38 @@ class XenaPort(XenaObject):
             payloads_stats[tpld] = tpld.read_stats()
         return payloads_stats
 
+
+    def add_filter(self,conditions,state = True):
+        fltr = XenaFilter(parent=self, index='{}/{}'.format(self.index, len(self.filters)))
+        fltr._create()
+        fltr.set_attributes(PF_CONDITION='{}'.format(conditions))
+        fltr.set_state(state)
+        return fltr
+
+    def read_filter_stats(self):
+        filter_stats = OrderedDict()
+        for flt in self.filters.values():
+            filter_stats[flt] = flt.read_stats()
+        return filter_stats
+
+    def clear_filters(self):
+        self.send_command('PF_INDICES')
+        for f in self.filters:
+            self.filters[f].del_object_from_parent()
+
     #
     # Properties.
     #
+    @property
+    def filters(self):
+        if not self.get_objects_by_type('xena_filter'):
+            for index in self.get_attribute('PF_INDICES').split():
+                fltr = XenaFilter(parent=self, index='{}/{}'.format(self.index, index, name=None))
+                pf_comment = fltr.get_attribute('PF_COMMENT')
+                if pf_comment:
+                    fltr._data['name'] = pf_comment
+        return {s.id: s for s in self.get_objects_by_type('xena_filter')}
+
 
     @property
     def streams(self):
@@ -214,7 +250,6 @@ class XenaPort(XenaObject):
         :return: dictionary {id: object} of all streams.
         :rtype: dict of (int, xenavalkyrie.xena_stream.XenaStream)
         """
-
         if not self.get_objects_by_type('stream'):
             tpld_ids = []
             for index in self.get_attribute('ps_indices').split():
@@ -250,6 +285,9 @@ class XenaPort(XenaObject):
         if not self.get_object_by_type('capture'):
             XenaCapture(parent=self)
         return self.get_object_by_type('capture')
+
+
+
 
 
 class XenaTpld(XenaObject21):
@@ -335,6 +373,9 @@ class XenaCapture(XenaObject):
             self._save_captue(file_name, text_packets)
             return text_packets
 
+        if cap_type is XenaCaptureBufferType.pcap and not tshark:
+            from xenavalkyrie.xena_tshark import Tshark
+            tshark = Tshark('')
         temp_file_name = file_name + '_'
         self._save_captue(temp_file_name, text_packets)
         tshark.text_to_pcap(temp_file_name, file_name)
@@ -375,3 +416,26 @@ class XenaCapturePacket(XenaObject21):
     def __init__(self, parent, index):
         objRef = '{}/{}'.format(parent.ref, index.split('/')[-1])
         super(self.__class__, self).__init__(objType='cappacket', parent=parent, index=index, objRef=objRef)
+
+class XenaFilter(XenaObject21):
+
+    create_command = 'PF_CREATE'
+    _info_config_commands = ['PF_CONFIG']
+    stats_captions = {'PR_FILTER': ['bps', 'pps', 'bytes', 'packets']}
+
+    def __init__(self, parent, index):
+        objRef = '{}/{}'.format(parent.ref, index.split('/')[-1])
+        super(self.__class__, self).__init__(objType='xena_filter', parent=parent, index=index, objRef=objRef)
+
+    def read_stats(self):
+        stats_with_captions = OrderedDict()
+        for stat_name in self.stats_captions.keys():
+            stats_with_captions[stat_name] = self.read_stat(self.stats_captions[stat_name], stat_name)
+        return stats_with_captions
+
+    def set_state(self, state):
+        state = 'ON' if state else 'OFF'
+        self.set_attributes(PF_ENABLE=state)
+
+    def del_object_from_parent(self):
+        super(self.__class__, self).del_object_from_parent()
