@@ -2,6 +2,7 @@
 import os
 import sys
 import copy
+from os.path import exists
 
 import subprocess
 
@@ -13,8 +14,7 @@ class Tshark:
         :param ws_path: full path to wireshark installation folder.
         :param temp_folder: folder to save temporary files. If None - use OS 'native' temp folder.
         """
-
-        self.ws_path = ws_path
+        self.ws_path = ws_path if ws_path else self.shark_path
         if not temp_folder:
             temp_folder = 'c:/temp' if sys.platform == 'win32' else '/tmp'
         self.temp_folder = temp_folder
@@ -39,6 +39,21 @@ class Tshark:
         os.remove(out_file_name)
         return fields
 
+    @property
+    def shark_path(self):
+        app_name = 'wireshark.exe'
+        """
+        Check if wireshark available on the system and return path/None
+        """
+        known_path_list = ['C:\\Program Files\\Wireshark\\']
+        for p in known_path_list:
+            if exists(p):
+                return p
+        sys_path_list = os.environ["PATH"].split(';')
+        for p in sys_path_list:
+            if exists(p + app_name):
+                return p
+        return None
 
 class TsharkAnalyzer:
 
